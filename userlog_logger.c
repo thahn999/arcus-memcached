@@ -42,7 +42,7 @@ static const char *get_name(void) {
    /* definitions and data */
 #define NUM_LOGFILE 5
 #define MAX_LOGFILE_SIZE (1024*1024*10)  // for now, 10M
-#define DEFAULT_LOGFILE_NAME "arcuslog"
+#define DEFAULT_LOGFILE_NAME "arcus"
 #define LOGDIRECTORY         "./ARCUSlog"
 
 static char logfile_name[NUM_LOGFILE][40];
@@ -52,7 +52,7 @@ static int current_flength;		// current file length
 
 static void do_make_logname(int filenum, char *ret_name)
 {
-	/* log file name : DIR-NAME + "/" + DEFAULT-NAME + sequence no(0~4) + date */
+	/* log file name : DIR-NAME + "/" + DEFAULT-NAME + sequence no(0~4) + date + ".log" */
     if (ret_name == NULL || filenum < 0 || filenum > NUM_LOGFILE)  return;
     char buf[20];
     sprintf(ret_name, "%s/%s", LOGDIRECTORY, DEFAULT_LOGFILE_NAME);
@@ -60,8 +60,22 @@ static void do_make_logname(int filenum, char *ret_name)
     struct tm *day;
     time_t clock = time(0);
     day = localtime(&clock);
-    sprintf(buf, "%d_%d_%d", day->tm_year+1900,day->tm_mon+1,day->tm_mday);
+    sprintf(buf, "%d_%d_%d.log", day->tm_year+1900,day->tm_mon+1,day->tm_mday);
     strcat(ret_name, buf);
+}
+
+static void do_make_prefix(char *ret_string)
+{
+       /* prefix : syslog type : time(month(Eng) day hr:min:sec) + hostname + pid */
+    struct tm *now;
+    time_t clock;
+    char buf[50], hname[30];
+    clock = time(0);
+    now = localtime(&clock);
+    (void) strftime(ret_string, 100, "%h %e %T ", now);
+    if ( gethostname(hname, sizeof(hname)-1) != 0 )   hname[0] = 0;
+    sprintf(buf, "%s memcached[%d]: ", hname, getpid());
+    strcat(ret_string, buf);
 }
 
 
@@ -73,29 +87,32 @@ static void logger_log(EXTENSION_LOG_LEVEL severity,
     if (severity >= current_log_level) {
              /* userlog codes */
         if (current_flength >= MAX_LOGFILE_SIZE) {
-	    fclose(current_fp);
-	    current_file++;
-	    if ( current_file == NUM_LOGFILE)  current_file = 0;
-	    remove(logfile_name[current_file]);    // To maintain the total # of log files
-	    do_make_logname(current_file, logfile_name[current_file]);
-	    current_fp = fopen(logfile_name[current_file], "w");
-	    current_flength = 0;
-	}
-	if (current_fp == NULL) {
-	    printf("\n FATAL error : can't open user log file: %s\n", logfile_name[current_file]);
+            fclose(current_fp);
+            current_file++;
+            if ( current_file == NUM_LOGFILE)  current_file = 0;
+            remove(logfile_name[current_file]);    // To maintain the total # of log files
+            do_make_logname(current_file, logfile_name[current_file]);
+            current_fp = fopen(logfile_name[current_file], "w");
+            current_flength = 0;
+        }
+        if (current_fp == NULL) {
+            fprintf(stderr, "\n FATAL error : can't open user log file: %s\n", logfile_name[current_file]);
             return ;
-	}    /* end of userlog codes */
+        }    /* end of userlog codes */
 
-        char buffer[2048];
+        char buffer1[2048], buffer2[2048];
+        do_make_prefix(buffer1);
         va_list ap;
         va_start(ap, fmt);
-        int len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
+        int len = vsnprintf(buffer2, sizeof(buffer2), fmt, ap);
         va_end(ap);
+        len += strlen(buffer1);
+        strcat(buffer1, buffer2);
 
         if (len != -1) {
-            fprintf(current_fp, "%s", buffer);
-	    fflush(current_fp);
-	    current_flength += len;
+            fprintf(current_fp, "%s", buffer1);
+            fflush(current_fp);
+            current_flength += len;
         }
     }
 }
@@ -125,13 +142,13 @@ EXTENSION_ERROR_CODE memcached_extensions_initialize(const char *config,
          /* userlog codes */
     if ( mkdir(LOGDIRECTORY, 0744) == -1 ) {
         if (errno != EEXIST) {
-	    printf("\n FATAL error : can't make log Directory: %s\n", LOGDIRECTORY);
+            fprintf(stderr, "\n FATAL error : can't make log Directory: %s\n", LOGDIRECTORY);
             return EXTENSION_FATAL;
-	}
+        }
     }
     do_make_logname(0, logfile_name[0]);
     if ( (current_fp = fopen(logfile_name[0], "w")) == NULL ) {
-	    printf("\n FATAL error : can't make log file: %s\n", logfile_name[0]);
+        fprintf(stderr, "\n FATAL error : can't make log file: %s\n", logfile_name[0]);
         return EXTENSION_FATAL;
     }
     current_file = 0;
@@ -143,6 +160,5 @@ EXTENSION_ERROR_CODE memcached_extensions_initialize(const char *config,
     }
 
     sapi->callback->register_callback(NULL, ON_LOG_LEVEL, on_log_level, NULL);
-
     return EXTENSION_SUCCESS;
 }
