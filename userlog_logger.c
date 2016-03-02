@@ -41,18 +41,22 @@ static const char *get_name(void) {
    /* make a directory containing log files, named "/ARCUSlog" under the current directory */
    /* definitions and data */
 #define NUM_LOGFILE 5
-#define MAX_LOGFILE_SIZE (1024*1024*10)  // for now, 10M
+#define MAX_LOGFILE_SIZE (1024*500)
+//#define MAX_LOGFILE_SIZE (1024*1024*10)  // for now, 10M
 #define DEFAULT_LOGFILE_NAME "arcus"
 #define LOGDIRECTORY         "./ARCUSlog"
 
 static char logfile_name[NUM_LOGFILE][40];
-static int current_file;		// currently which file is used among NUM_LOGFILE
+static int  current_file;             // currently which file is used among NUM_LOGFILE
 static FILE *current_fp;
-static int current_flength;		// current file length
+static int  current_flength;          // current file length
+static char prev_log[2048];           // reserve the previously printed log 
+static char prev_time[200];           // previous log time
+static int  samelog_cnt;              // number of the same log
 
 static void do_make_logname(int filenum, char *ret_name)
 {
-	/* log file name : DIR-NAME + "/" + DEFAULT-NAME + sequence no(0~4) + date + ".log" */
+        /* log file name : DIR-NAME + "/" + DEFAULT-NAME + sequence no(0~4) + date + ".log" */
     if (ret_name == NULL || filenum < 0 || filenum > NUM_LOGFILE)  return;
     char buf[20];
     sprintf(ret_name, "%s/%s", LOGDIRECTORY, DEFAULT_LOGFILE_NAME);
@@ -72,7 +76,7 @@ static void do_make_prefix(char *ret_string)
     char buf[50], hname[30];
     clock = time(0);
     now = localtime(&clock);
-    (void) strftime(ret_string, 100, "%h %e %T ", now);
+    (void) strftime(ret_string, 30, "%h %e %T ", now);
     if ( gethostname(hname, sizeof(hname)-1) != 0 )   hname[0] = 0;
     sprintf(buf, "%s memcached[%d]: ", hname, getpid());
     strcat(ret_string, buf);
@@ -85,7 +89,42 @@ static void logger_log(EXTENSION_LOG_LEVEL severity,
 {
     (void)client_cookie;
     if (severity >= current_log_level) {
+
+        char full_buf[2048], body_buf[2048];
+        va_list ap;
+        va_start(ap, fmt);
+        int len = vsnprintf(body_buf, sizeof(body_buf), fmt, ap);
+        va_end(ap);
+
              /* userlog codes */
+        if ( (len!=strlen(prev_log)) || strcmp(body_buf, prev_log)!=0 ) {
+               /* Two log messages are different. Print the count and last time, 
+                * then restart the count */
+            if ( samelog_cnt > 1 ) {
+                sprintf(full_buf, "     the SAME LOG reported %d-times, last at %s\n", 
+                         samelog_cnt, prev_time);
+                int tmplen = strlen(full_buf);
+                fprintf(current_fp, "%s", full_buf);
+                fflush(current_fp);
+                current_flength += tmplen;
+            }
+            do_make_prefix(full_buf);
+            strcpy(prev_time, full_buf);
+            len += strlen(full_buf);
+            strcat(full_buf, body_buf);
+            if (len != -1) {
+                fprintf(current_fp, "%s", full_buf);
+                fflush(current_fp);
+                current_flength += len;
+            }
+            samelog_cnt = 1;
+            strcpy(prev_log, body_buf);
+        }
+        else {  /* The current log 'body_buf and the previous log are same */
+            samelog_cnt++;  // Just increase the count and save the time
+            do_make_prefix(prev_time);
+        }
+
         if (current_flength >= MAX_LOGFILE_SIZE) {
             fclose(current_fp);
             current_file++;
@@ -94,25 +133,10 @@ static void logger_log(EXTENSION_LOG_LEVEL severity,
             do_make_logname(current_file, logfile_name[current_file]);
             current_fp = fopen(logfile_name[current_file], "w");
             current_flength = 0;
-        }
-        if (current_fp == NULL) {
-            fprintf(stderr, "\n FATAL error : can't open user log file: %s\n", logfile_name[current_file]);
-            return ;
-        }    /* end of userlog codes */
-
-        char buffer1[2048], buffer2[2048];
-        do_make_prefix(buffer1);
-        va_list ap;
-        va_start(ap, fmt);
-        int len = vsnprintf(buffer2, sizeof(buffer2), fmt, ap);
-        va_end(ap);
-        len += strlen(buffer1);
-        strcat(buffer1, buffer2);
-
-        if (len != -1) {
-            fprintf(current_fp, "%s", buffer1);
-            fflush(current_fp);
-            current_flength += len;
+            if (current_fp == NULL) {
+                fprintf(stderr, "\n FATAL error : can't open user log file: %s\n", logfile_name[current_file]);
+                return ;
+            }
         }
     }
 }
@@ -153,6 +177,8 @@ EXTENSION_ERROR_CODE memcached_extensions_initialize(const char *config,
     }
     current_file = 0;
     current_flength = 0;
+    prev_log[0] = 0;   prev_time[0] = 0;
+    samelog_cnt = 1;
         /* end of userlog codes */
 
     if (!sapi->extension->register_extension(EXTENSION_LOGGER, &descriptor)) {
