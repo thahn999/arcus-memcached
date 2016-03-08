@@ -2,7 +2,7 @@
 /* -*- Mode: C; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
 /*
  * arcus-memcached - Arcus memory cache server
- * Copyright 2010-2014 NAVER Corp.
+ * Copyright 2016 JaM2in Co., Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,8 +41,7 @@ static const char *get_name(void) {
    /* make a directory containing log files, named "/ARCUSlog" under the current directory */
    /* definitions and data */
 #define NUM_LOGFILE 5
-#define MAX_LOGFILE_SIZE (1024*500)
-//#define MAX_LOGFILE_SIZE (1024*1024*10)  // for now, 10M
+#define MAX_LOGFILE_SIZE (1024*1024*10)  // for now, 10M
 #define DEFAULT_LOGFILE_NAME "arcus"
 #define LOGDIRECTORY         "./ARCUSlog"
 
@@ -50,7 +49,7 @@ static char logfile_name[NUM_LOGFILE][40];
 static int  current_file;             // currently which file is used among NUM_LOGFILE
 static FILE *current_fp;
 static int  current_flength;          // current file length
-static char prev_log[2048];           // reserve the previously printed log 
+static char prev_log[2048];           // reserve the previously printed log
 static char prev_time[200];           // previous log time
 static int  samelog_cnt;              // number of the same log
 
@@ -98,11 +97,11 @@ static void logger_log(EXTENSION_LOG_LEVEL severity,
 
              /* userlog codes */
         if ( (len!=strlen(prev_log)) || strcmp(body_buf, prev_log)!=0 ) {
-               /* Two log messages are different. Print the count and last time, 
+               /* Two log messages are different. Print the count and last time,
                 * then restart the count */
             if ( samelog_cnt > 1 ) {
-                sprintf(full_buf, "     the SAME LOG reported %d-times, last at %s\n", 
-                         samelog_cnt, prev_time);
+                sprintf(full_buf, "%slast message repeated %d times\n",
+                         prev_time, samelog_cnt);
                 int tmplen = strlen(full_buf);
                 fprintf(current_fp, "%s", full_buf);
                 fflush(current_fp);
